@@ -1,4 +1,4 @@
-# Marqius: a maintained wkhtmltopdf replacement
+# Marqius: a maintained drop-in wkhtmltopdf replacement
 
 [![Marqius — great documents, ready for print](https://marqius.com/images/marqius-social.jpg)](https://marqius.com/wkhtmltopdf/)
 
@@ -41,6 +41,7 @@ Current direct downloads support **Linux x86-64**, **Linux ARM64** and **Apple s
 - [Official download and installation guide](https://marqius.com/wkhtmltopdf/download/)
 - [wkhtmltopdf switching manual (PDF)](https://marqius.com/download/replace-wkhtmltopdf.pdf)
 - [Security and untrusted HTML guidance](https://marqius.com/wkhtmltopdf/security/)
+- [Docker Hub: marqius/wkhtmltopdf](https://hub.docker.com/r/marqius/wkhtmltopdf) — `0.11.0` and `latest` support Linux AMD64 and ARM64.
 - [Homebrew tap](https://github.com/marqius-wkhtmltopdf/homebrew-tap) — distribution setup is in progress; no installable cask or formula is published yet.
 
 Marqius is proprietary software from Simple AI LLC. These repositories provide product documentation and distribution resources, not the engine source. See the [licence plans](https://marqius.com/wkhtmltopdf-buy/) for product terms.
