@@ -9,6 +9,8 @@ name: release
 # A release: put the engine commit in release/engine and the notes in release/notes.md, commit,
 # and push the tag vX.Y.Z (it must match the engine's version).
 # A rehearsal: Actions > release > Run workflow. It builds, attests and checks; it publishes nothing.
+# Agent37 then tests the programs and images a run made, and copies the images to Docker Hub
+# unchanged (the engine's tools/download-tests: run.py --release --from-github RUN).
 #
 # The engine's source is private. It is read with a read-only key (ENGINE_DEPLOY_KEY), and
 # its repository's name is a secret too (ENGINE_REPO). This repository's logs are public, so
@@ -32,10 +34,12 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - { name: linux-x86_64, os: ubuntu-24.04, kind: docker, target: out, platform: linux/amd64, file: marqius-wkhtmltopdf }
-          - { name: linux-arm64, os: ubuntu-24.04, kind: docker, target: out, platform: linux/arm64, file: marqius-wkhtmltopdf }
-          - { name: windows-x86_64.exe, os: ubuntu-24.04, kind: docker, target: windows, platform: linux/amd64, file: marqius-wkhtmltopdf.exe }
-          - { name: macos-arm64, os: macos-15, kind: cargo, file: marqius }
+          # every program is compiled on Linux, cross-compiled with zig: GitHub's Macs are often
+          # not to be had, and the macOS program needs none (see release/macos.Dockerfile)
+          - { name: linux-x86_64, os: ubuntu-24.04, kind: docker, dockerfile: Dockerfile.wkhtmltopdf, target: out, platform: linux/amd64, file: marqius-wkhtmltopdf }
+          - { name: linux-arm64, os: ubuntu-24.04, kind: docker, dockerfile: Dockerfile.wkhtmltopdf, target: out, platform: linux/arm64, file: marqius-wkhtmltopdf }
+          - { name: windows-x86_64.exe, os: ubuntu-24.04, kind: docker, dockerfile: Dockerfile.wkhtmltopdf, target: windows, platform: linux/amd64, file: marqius-wkhtmltopdf.exe }
+          - { name: macos-arm64, os: ubuntu-24.04, kind: docker, dockerfile: ../release/macos.Dockerfile, target: '', platform: linux/amd64, file: marqius-wkhtmltopdf }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 75
     permissions:
@@ -82,8 +86,8 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: |
           docker buildx create --name rel --driver docker-container --use --bootstrap > /dev/null 2>&1
-          if ! docker buildx build -f Dockerfile.wkhtmltopdf --build-arg MARQIUS_VERSION="$V" \
-               --platform "$PLATFORM" --target "$TARGET" -o "type=local,dest=$RUNNER_TEMP/out" \
+          if ! docker buildx build -f "${{ matrix.dockerfile }}" --build-arg MARQIUS_VERSION="$V" \
+               --platform "$PLATFORM" ${TARGET:+--target "$TARGET"} -o "type=local,dest=$RUNNER_TEMP/out" \
                --progress plain . > "$RUNNER_TEMP/build.log" 2>&1; then
             echo "The build failed. Its log stays on the machine; where it stopped:"
             grep -E '^ERROR|^#[0-9]+ ERROR' "$RUNNER_TEMP/build.log" | cut -c1-160 | tail -3
@@ -91,21 +95,8 @@ jobs:
           fi
           mkdir -p ../dist && cp "$RUNNER_TEMP/out/${{ matrix.file }}" "../dist/marqius-wkhtmltopdf-${{ matrix.name }}"
 
-      - name: Build with cargo, on a Mac
-        if: matrix.kind == 'cargo'
-        working-directory: engine
-        run: |
-          rustup toolchain install stable --profile minimal > /dev/null 2>&1
-          if ! CARGO_PROFILE_RELEASE_STRIP=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
-               cargo +stable build --release --locked --features wkhtmltopdf-edition > "$RUNNER_TEMP/build.log" 2>&1; then
-            echo "The build failed. Its log stays on the machine; where it stopped:"
-            grep -E '^error' "$RUNNER_TEMP/build.log" | cut -c1-100 | tail -3
-            exit 1
-          fi
-          mkdir -p ../dist && cp "target/release/${{ matrix.file }}" "../dist/marqius-wkhtmltopdf-${{ matrix.name }}"
-
       - name: It runs and says its version
-        if: matrix.name == 'linux-x86_64' || matrix.name == 'macos-arm64'
+        if: matrix.name == 'linux-x86_64'
         env:
           V: ${{ steps.version.outputs.version }}
         run: |
@@ -114,9 +105,10 @@ jobs:
           echo "$said"
           [ "$said" = "marqius-wkhtmltopdf $V" ]
 
-      - name: Size and SHA-256
+      - name: Size, kind and SHA-256
         run: |
           f="dist/marqius-wkhtmltopdf-${{ matrix.name }}"
+          file -b "$f" | cut -c1-70
           echo "$(wc -c < "$f" | tr -d ' ') bytes, sha256 $(shasum -a 256 "$f" | cut -c1-64)"
 
       - name: GitHub's build provenance for this program
@@ -131,8 +123,98 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  release:
+  images:
+    # The six Docker images, for both chips, made from the two Linux programs built above (the
+    # Dockerfile's image stages only copy files), with BuildKit's full provenance and SBOM inside,
+    # and GitHub's build provenance for each image by its digest. They leave as OCI archives:
+    # Agent37 loads them unchanged (the digests stay), tests them, and copies them to Docker Hub,
+    # where `gh attestation verify oci://marqius/wkhtmltopdf:TAG -R marqiushq/marqius-wkhtmltopdf`
+    # checks them.
     needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: The engine commit
+        id: engine
+        run: echo "commit=$(tr -d ' \n' < release/engine)" >> "$GITHUB_OUTPUT"
+
+      - name: The engine's Dockerfile and demo files only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ secrets.ENGINE_REPO }}
+          ref: ${{ steps.engine.outputs.commit }}
+          ssh-key: ${{ secrets.ENGINE_DEPLOY_KEY }}
+          path: engine
+          persist-credentials: false
+          sparse-checkout: |
+            Cargo.toml
+            Dockerfile.wkhtmltopdf
+            .dockerignore
+            src/wk/demo/
+          sparse-checkout-cone-mode: false
+
+      - name: Version
+        id: version
+        run: echo "version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' engine/Cargo.toml | head -1)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: linux-*
+          path: programs
+          merge-multiple: true
+
+      - name: The two Linux programs, checked by their own provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for chip in x86_64:amd64 arm64:arm64; do
+            f="programs/marqius-wkhtmltopdf-linux-${chip%%:*}"
+            gh attestation verify "$f" -R "$GITHUB_REPOSITORY" > /dev/null
+            mkdir -p "bins/${chip##*:}" && cp "$f" "bins/${chip##*:}/marqius-wkhtmltopdf" && chmod +x "bins/${chip##*:}/marqius-wkhtmltopdf"
+            echo "$(basename "$f"): provenance verified"
+          done
+
+      - name: Every image for both chips, with full provenance and an SBOM
+        env:
+          V: ${{ steps.version.outputs.version }}
+        run: |
+          docker run -d --name reg -p 127.0.0.1:5000:5000 registry:2 > /dev/null
+          printf '[registry."localhost:5000"]\n  http = true\n  insecure = true\n' > buildkitd.toml
+          docker buildx create --name img --driver docker-container --driver-opt network=host --config buildkitd.toml --use --bootstrap > /dev/null 2>&1
+          printf 'FROM scratch\nARG TARGETARCH\nCOPY ${TARGETARCH}/marqius-wkhtmltopdf /out/marqius-wkhtmltopdf\n' > bins/Dockerfile
+          docker buildx build --platform linux/amd64,linux/arm64 --provenance=false -t "localhost:5000/bins:$V" --push bins > bins.log 2>&1 || { tail -5 bins.log; exit 1; }
+          mkdir -p oci
+          for v in latest slim alpine trixie bookworm bullseye; do
+            (cd engine && docker buildx build -f Dockerfile.wkhtmltopdf --build-arg MARQIUS_VERSION="$V" \
+              --platform linux/amd64,linux/arm64 --target "$v" --build-context "build=docker-image://localhost:5000/bins:$V" \
+              --provenance=mode=max --sbom=true -o "type=oci,dest=../oci/$v.tar" . > "../image-$v.log" 2>&1) || { tail -5 "image-$v.log"; exit 1; }
+            d=$(tar -xOf "oci/$v.tar" index.json | jq -r '.manifests[0].digest')
+            echo "${d#sha256:}  marqius/wkhtmltopdf:$v" >> oci/digests.txt
+            echo "$v: $d, $(wc -c < "oci/$v.tar" | tr -d ' ') bytes"
+          done
+
+      - name: GitHub's build provenance for each image, by its digest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: oci/digests.txt
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: images
+          path: oci/
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: [build, images]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
