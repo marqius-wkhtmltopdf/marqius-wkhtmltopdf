@@ -1,0 +1,213 @@
+name: release
+
+# Builds marqius-wkhtmltopdf on GitHub's own machines from one commit of its engine, gives every
+# program GitHub's build provenance and a software bill of materials (SBOM), checks both as a
+# customer would, and publishes the programs as a GitHub Release. Anyone can check a file:
+#
+#   gh attestation verify marqius-wkhtmltopdf-linux-x86_64 -R marqiushq/marqius-wkhtmltopdf
+#
+# A release: put the engine commit in release/engine and the notes in release/notes.md, commit,
+# and push the tag vX.Y.Z (it must match the engine's version).
+# A rehearsal: Actions > release > Run workflow. It builds, attests and checks; it publishes nothing.
+#
+# The engine's source is private. It is read with a read-only key (ENGINE_DEPLOY_KEY), and
+# its repository's name is a secret too (ENGINE_REPO). This repository's logs are public, so
+# the build's own output stays on the machine: a failed build says only where it stopped.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build ${{ matrix.name }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { name: linux-x86_64, os: ubuntu-24.04, kind: docker, target: out, platform: linux/amd64, file: marqius-wkhtmltopdf }
+          - { name: linux-arm64, os: ubuntu-24.04, kind: docker, target: out, platform: linux/arm64, file: marqius-wkhtmltopdf }
+          - { name: windows-x86_64.exe, os: ubuntu-24.04, kind: docker, target: windows, platform: linux/amd64, file: marqius-wkhtmltopdf.exe }
+          - { name: macos-arm64, os: macos-15, kind: cargo, file: marqius }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: The engine commit this release builds
+        id: engine
+        run: |
+          commit=$(tr -d ' \n' < release/engine)
+          echo "$commit" | grep -Eq '^[0-9a-f]{40}$' || { echo "release/engine must hold one full commit hash"; exit 1; }
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+      - name: The engine's source (read-only key)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ secrets.ENGINE_REPO }}
+          ref: ${{ steps.engine.outputs.commit }}
+          ssh-key: ${{ secrets.ENGINE_DEPLOY_KEY }}
+          path: engine
+          persist-credentials: false
+
+      - name: Its version, which a tag must match
+        id: version
+        run: |
+          v=$(sed -n 's/^version *= *"\(.*\)"/\1/p' engine/Cargo.toml | head -1)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "marqius-wkhtmltopdf $v, engine commit ${{ steps.engine.outputs.commit }}"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$v" ]; then
+            echo "the tag is $GITHUB_REF_NAME but the engine is $v"; exit 1
+          fi
+
+      - name: Build with Docker, as the images are built
+        if: matrix.kind == 'docker'
+        working-directory: engine
+        env:
+          V: ${{ steps.version.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          docker buildx create --name rel --driver docker-container --use --bootstrap > /dev/null 2>&1
+          if ! docker buildx build -f Dockerfile.wkhtmltopdf --build-arg MARQIUS_VERSION="$V" \
+               --platform "$PLATFORM" --target "$TARGET" -o "type=local,dest=$RUNNER_TEMP/out" \
+               --progress plain . > "$RUNNER_TEMP/build.log" 2>&1; then
+            echo "The build failed. Its log stays on the machine; where it stopped:"
+            grep -E '^ERROR|^#[0-9]+ ERROR' "$RUNNER_TEMP/build.log" | cut -c1-160 | tail -3
+            exit 1
+          fi
+          mkdir -p ../dist && cp "$RUNNER_TEMP/out/${{ matrix.file }}" "../dist/marqius-wkhtmltopdf-${{ matrix.name }}"
+
+      - name: Build with cargo, on a Mac
+        if: matrix.kind == 'cargo'
+        working-directory: engine
+        run: |
+          rustup toolchain install stable --profile minimal > /dev/null 2>&1
+          if ! CARGO_PROFILE_RELEASE_STRIP=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
+               cargo +stable build --release --locked --features wkhtmltopdf-edition > "$RUNNER_TEMP/build.log" 2>&1; then
+            echo "The build failed. Its log stays on the machine; where it stopped:"
+            grep -E '^error' "$RUNNER_TEMP/build.log" | cut -c1-100 | tail -3
+            exit 1
+          fi
+          mkdir -p ../dist && cp "target/release/${{ matrix.file }}" "../dist/marqius-wkhtmltopdf-${{ matrix.name }}"
+
+      - name: It runs and says its version
+        if: matrix.name == 'linux-x86_64' || matrix.name == 'macos-arm64'
+        env:
+          V: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/try" && cp "dist/marqius-wkhtmltopdf-${{ matrix.name }}" "$RUNNER_TEMP/try/marqius-wkhtmltopdf"
+          said=$("$RUNNER_TEMP/try/marqius-wkhtmltopdf" --version)
+          echo "$said"
+          [ "$said" = "marqius-wkhtmltopdf $V" ]
+
+      - name: Size and SHA-256
+        run: |
+          f="dist/marqius-wkhtmltopdf-${{ matrix.name }}"
+          echo "$(wc -c < "$f" | tr -d ' ') bytes, sha256 $(shasum -a 256 "$f" | cut -c1-64)"
+
+      - name: GitHub's build provenance for this program
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/marqius-wkhtmltopdf-${{ matrix.name }}
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.name }}
+          path: dist/marqius-wkhtmltopdf-${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: The engine commit
+        id: engine
+        run: echo "commit=$(tr -d ' \n' < release/engine)" >> "$GITHUB_OUTPUT"
+
+      - name: The engine's Cargo.toml and Cargo.lock only, for the SBOM
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ secrets.ENGINE_REPO }}
+          ref: ${{ steps.engine.outputs.commit }}
+          ssh-key: ${{ secrets.ENGINE_DEPLOY_KEY }}
+          path: engine
+          persist-credentials: false
+          sparse-checkout: |
+            Cargo.toml
+            Cargo.lock
+          sparse-checkout-cone-mode: false
+
+      - name: Version
+        id: version
+        run: echo "version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' engine/Cargo.toml | head -1)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: The software bill of materials, from the engine's Cargo.lock
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: engine
+          format: spdx-json
+          output-file: sbom/marqius-wkhtmltopdf-${{ steps.version.outputs.version }}.spdx.json
+          upload-artifact: false
+
+      - name: The SBOM attested for every program
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: dist/marqius-wkhtmltopdf-*
+          sbom-path: sbom/marqius-wkhtmltopdf-${{ steps.version.outputs.version }}.spdx.json
+
+      - name: Each program checked with GitHub, as a customer would check it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=0
+          for f in dist/marqius-wkhtmltopdf-*; do
+            gh attestation verify "$f" -R "$GITHUB_REPOSITORY" > /dev/null
+            gh attestation verify "$f" -R "$GITHUB_REPOSITORY" --predicate-type https://spdx.dev/Document/v2.3 > /dev/null
+            echo "$(basename "$f"): provenance and SBOM verified"
+            n=$((n + 1))
+          done
+          [ "$n" = 4 ] || { echo "expected 4 programs, found $n"; exit 1; }
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum marqius-wkhtmltopdf-* > ../SHA256SUMS
+          for f in marqius-wkhtmltopdf-*; do sha256sum "$f" > "$f.sha256"; done
+          mv ../SHA256SUMS . && cp ../sbom/*.spdx.json . && cat SHA256SUMS
+
+      - name: Publish the release (a tag only; a rehearsal stops here)
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --title "marqius-wkhtmltopdf $V" --notes-file release/notes.md --verify-tag dist/*
