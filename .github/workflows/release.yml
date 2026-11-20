@@ -7,7 +7,8 @@ name: release
 #   gh attestation verify marqius-wkhtmltopdf-linux-x86_64 -R marqiushq/marqius-wkhtmltopdf
 #
 # A release: put the engine commit in release/engine and the notes in release/notes.md, commit,
-# and push the tag vX.Y.Z (it must match the engine's version).
+# and push the tag vX.Y.Z (it must match the engine's version). The release is made as a draft;
+# it is made public once Agent37 has tested its files and images.
 # A rehearsal: Actions > release > Run workflow. It builds, attests and checks; it publishes nothing.
 # Agent37 then tests the programs and images a run made, and copies the images to Docker Hub
 # unchanged (the engine's tools/download-tests: run.py --release --from-github RUN).
@@ -288,10 +289,12 @@ jobs:
           for f in marqius-wkhtmltopdf-*; do sha256sum "$f" > "$f.sha256"; done
           mv ../SHA256SUMS . && cp ../sbom/*.spdx.json . && cat SHA256SUMS
 
-      - name: Publish the release (a tag only; a rehearsal stops here)
+      # a draft, not yet public: Agent37 tests these very files and images first (run.py --release
+      # --from-github RUN --push), then the release is made public (gh release edit TAG --draft=false)
+      - name: The release, as a draft (a tag only; a rehearsal stops here)
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
           V: ${{ steps.version.outputs.version }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --title "marqius-wkhtmltopdf $V" --notes-file release/notes.md --verify-tag dist/*
+          gh release create "$GITHUB_REF_NAME" --draft --title "marqius-wkhtmltopdf $V" --notes-file release/notes.md --verify-tag dist/*
