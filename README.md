@@ -1,18 +1,22 @@
-# Marqius: a maintained drop-in wkhtmltopdf replacement
+# Marqius — drop-in replacement for wkhtmltopdf in 14 libraries
 
-[![Marqius — great documents, ready for print](https://marqius.com/images/marqius-social.jpg)](https://marqius.com/wkhtmltopdf/)
+**wkhtmltopdf is archived. Keep your code working.**
 
-**Keep your application. Replace the PDF converter.**
+Your application still needs to send invoices, statements and reports every day. Marqius by **Simple AI LLC** is a maintained, Rust-based HTML-to-PDF converter for applications that start the `wkhtmltopdf` executable. Keep your HTML templates, PDF calls and wrapper library; configure the Marqius binary and check your output before switching production.
 
-Marqius by **Simple AI LLC** is a wkhtmltopdf-compatible HTML-to-PDF command-line program for generating invoices, reports, statements and other documents. It is designed for teams whose applications call the wkhtmltopdf executable.
+[Find your library](https://github.com/marqius-wkhtmltopdf/marqius-wkhtmltopdf-examples#pick-your-library) · [See a real PDF comparison](https://marqius.com/download/launch-2026-11-20/marqius-wkhtmltopdf-same-html-comparison.pdf) · [Try 30 days, no card](https://marqius.com/wkhtmltopdf-buy/)
 
-Keep your templates and wrapper library, configure the Marqius executable, and compare the PDFs on your own documents before switching production.
+[![Marqius: keep your code, upgrade your PDFs](https://raw.githubusercontent.com/marqius-wkhtmltopdf/marqius-wkhtmltopdf-examples/codex/initial-examples/assets/cover.webp)](https://marqius.com/wkhtmltopdf/)
 
-[Explore Marqius](https://marqius.com/wkhtmltopdf/) · [Download and install](https://marqius.com/wkhtmltopdf/download/) · [Trial and licence plans](https://marqius.com/wkhtmltopdf-buy/) · [Contact](https://marqius.com/contact/)
+## Start with the code you already have
 
-## HTML-to-PDF workflows
+[![Examples CI](https://github.com/marqius-wkhtmltopdf/marqius-wkhtmltopdf-examples/actions/workflows/render-examples.yml/badge.svg)](https://github.com/marqius-wkhtmltopdf/marqius-wkhtmltopdf-examples/actions/workflows/render-examples.yml)
 
-| Your stack | Migration guide |
+The [public examples repository](https://github.com/marqius-wkhtmltopdf/marqius-wkhtmltopdf-examples) includes **14 runnable PDF integrations**: python-pdfkit, django-wkhtmltopdf, KnpLabs Snappy, laravel-snappy, phpwkhtmltopdf, KnpSnappyBundle, CakePdf, wicked_pdf, PDFKit for Ruby, wkhtmltopdf for Node.js, go-wkhtmltopdf, java-wkhtmltopdf-wrapper, pdf_generator for Elixir, and Rotativa.AspNetCore.
+
+Its integration CI checks that each example creates a PDF containing the expected invoice text. The README separately records dated upstream-suite results from the manual, including which suites test wrapper code without running the converter.
+
+| Your stack | Switching guide |
 | --- | --- |
 | Python, Django, Flask, pdfkit and imgkit | [Python guide](https://marqius.com/wkhtmltopdf/python/) |
 | PHP, Laravel, Snappy and laravel-snappy | [PHP and Laravel guide](https://marqius.com/wkhtmltopdf/laravel-php/) |
@@ -21,29 +25,22 @@ Keep your templates and wrapper library, configure the Marqius executable, and c
 | Node.js and Go wrappers | [Node.js and Go guide](https://marqius.com/wkhtmltopdf/node-go/) |
 | Docker images and CI runners | [Docker guide](https://marqius.com/wkhtmltopdf/docker/) |
 
-These guides cover integrations that launch an executable. Marqius does not replace the libwkhtmltox shared library used by integrations such as DinkToPdf.
+## See the PDFs before you switch
 
-## Start with one real document
+The [same-HTML invoice comparison](https://marqius.com/download/launch-2026-11-20/marqius-wkhtmltopdf-same-html-comparison.pdf) contains a side-by-side overview, both original full pages, and the source and method. It uses wkhtmltopdf 0.12.6 (patched Qt) and Marqius 0.12.6 in the same Linux environment, with the same fonts and CLI flags, on **20 November 2026**. [Download the example pack](https://marqius.com/download/launch-2026-11-20/marqius-same-html-example.zip).
 
-After following the installation guide, render a PDF and compare it with your existing output:
+That is one document. Use your own invoices, reports or statements to check fonts, wrapping, tables, amounts, images, headers, footers and page breaks before production.
 
-```sh
-marqius wkhtmltopdf --page-size A4 invoice.html invoice.pdf
-marqius compare old.pdf invoice.pdf
-```
+These integrations launch an executable. Marqius does not replace the `libwkhtmltox` shared library used by bindings such as DinkToPdf. Some option behavior differs, including custom table-of-contents XSL stylesheets; JavaScript-dependent pages may use installed Chrome or Chromium. The [developer manual](https://marqius.com/download/developer-manual.pdf) explains the boundaries.
 
-Check fonts, images, headers, footers and page breaks before changing a production workflow. PDF output is not guaranteed to be identical.
+## Install, evaluate and get help
 
-Current direct downloads support **Linux x86-64**, **Linux ARM64** and **Apple silicon Macs**. The official installer verifies SHA-256 checksums and preserves an existing wkhtmltopdf installation unless you explicitly choose takeover.
+- [Official downloads and installation](https://marqius.com/wkhtmltopdf/download/) — Linux x86-64, Linux ARM64 and Apple silicon Macs.
+- [Developer manual](https://marqius.com/download/developer-manual.pdf) — integration settings, CLI behavior and measured compatibility results.
+- [Docker Hub: marqius/wkhtmltopdf](https://hub.docker.com/r/marqius/wkhtmltopdf) · [Homebrew tap](https://github.com/marqius-wkhtmltopdf/homebrew-tap).
+- [Security and untrusted HTML guidance](https://marqius.com/wkhtmltopdf/security/).
+- [Watch the introduction](https://youtu.be/KFKbbDIYvXc) · [hello@marqius.com](mailto:hello@marqius.com).
 
-## Downloads, documentation and repositories
+**30-day trial. No card required.** This wkhtmltopdf edition is **$10 USD per Client per month** or **$500 USD per Client for a lifetime licence with upgrades**, plus applicable taxes. A Client is a legal entity under the [licence](https://marqius.com/wkhtmltopdf/licence-agreement/). [Trial and plans](https://marqius.com/wkhtmltopdf-buy/).
 
-- [Official download and installation guide](https://marqius.com/wkhtmltopdf/download/)
-- [wkhtmltopdf switching manual (PDF)](https://marqius.com/download/replace-wkhtmltopdf.pdf)
-- [Security and untrusted HTML guidance](https://marqius.com/wkhtmltopdf/security/)
-- [Docker Hub: marqius/wkhtmltopdf](https://hub.docker.com/r/marqius/wkhtmltopdf) — `0.11.0` and `latest` support Linux AMD64 and ARM64.
-- [Homebrew tap](https://github.com/marqius-wkhtmltopdf/homebrew-tap) — distribution setup is in progress; no installable cask or formula is published yet.
-
-Marqius is proprietary software from Simple AI LLC. These repositories provide product documentation and distribution resources, not the engine source. See the [licence plans](https://marqius.com/wkhtmltopdf-buy/) for product terms.
-
-Marqius is independent of the wkhtmltopdf project. Other product names identify migration paths and belong to their respective owners.
+The upstream [wkhtmltopdf repository was archived on 2 January 2023](https://github.com/wkhtmltopdf/wkhtmltopdf); its [status page](https://wkhtmltopdf.org/status.html) explains the aging Qt/WebKit stack. Marqius is independent of that project. The converter is proprietary software from Simple AI LLC; the integration examples are MIT licensed. Other product names identify integrations and belong to their respective owners.
