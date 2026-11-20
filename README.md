@@ -37,7 +37,7 @@ These integrations launch an executable. Marqius does not replace the `libwkhtml
 
 - [Official downloads and installation](https://marqius.com/wkhtmltopdf/download/) — Linux x86-64, Linux ARM64 and Apple silicon Macs.
 - [Developer manual](https://marqius.com/download/developer-manual.pdf) — integration settings, CLI behavior and measured compatibility results.
-- [Docker Hub: marqius/wkhtmltopdf](https://hub.docker.com/r/marqius/wkhtmltopdf) · [Homebrew tap](https://github.com/marqius-wkhtmltopdf/homebrew-tap).
+- [Docker Hub: marqius/wkhtmltopdf](https://hub.docker.com/r/marqius/wkhtmltopdf) · [Download and install Marqius](https://marqius.com/wkhtmltopdf/download/).
 - [Security and untrusted HTML guidance](https://marqius.com/wkhtmltopdf/security/).
 - [Watch the introduction](https://youtu.be/KFKbbDIYvXc) · [hello@marqius.com](mailto:hello@marqius.com).
 
