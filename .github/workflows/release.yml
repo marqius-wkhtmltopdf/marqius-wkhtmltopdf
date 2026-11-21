@@ -6,20 +6,30 @@ name: release
 #
 #   gh attestation verify marqius-wkhtmltopdf-linux-x86_64 -R marqiushq/marqius-wkhtmltopdf
 #
+# Built ahead: every tested engine commit is built here as soon as it is pushed (Run workflow with
+# its full hash in `engine`; the engine's tools/download-tests/run.py --build-ahead does it). Such a
+# run builds, attests and checks; it publishes nothing. Agent37 then tests what it made and keeps
+# the tested images ready (run.py --release --from-github RUN --hold).
 # A release: put the engine commit in release/engine and the notes in release/notes.md, commit,
-# and push the tag vX.Y.Z (it must match the engine's version). The release is made as a draft;
-# it is made public once Agent37 has tested its files and images.
-# A rehearsal: Actions > release > Run workflow. It builds, attests and checks; it publishes nothing.
-# Agent37 then tests the programs and images a run made, and copies the images to Docker Hub
-# unchanged (the engine's tools/download-tests: run.py --release --from-github RUN).
+# and push the tag vX.Y.Z (it must match the engine's version). When a build ahead of that commit
+# exists (and its files are still kept), the tag builds nothing again: its release is made from
+# those very files, so it takes minutes. The release is made as a draft; it is made public once
+# Agent37 has published the tested images to Docker Hub.
 #
 # The engine's source is private. It is read with a read-only key (ENGINE_DEPLOY_KEY), and
 # its repository's name is a secret too (ENGINE_REPO). This repository's logs are public, so
 # the build's own output stays on the machine: a failed build says only where it stopped.
+run-name: ${{ github.ref_type == 'tag' && format('release {0}', github.ref_name) || format('build {0}', inputs.engine || 'release/engine') }}
+
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      engine:
+        description: "The engine commit to build ahead (its full hash); empty: release/engine"
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -29,8 +39,49 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  engine:
+    # The engine commit this run is about, and on a tag the build ahead of it, if one is kept
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      commit: ${{ steps.which.outputs.commit }}
+      reuse: ${{ steps.ahead.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The engine commit
+        id: which
+        env:
+          ENGINE: ${{ inputs.engine }}
+        run: |
+          commit=${ENGINE:-$(tr -d ' \n' < release/engine)}
+          echo "$commit" | grep -Eq '^[0-9a-f]{40}$' || { echo "the engine commit must be one full hash"; exit 1; }
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "engine commit $commit"
+      - name: A build ahead of it, still kept (a tag only)
+        id: ahead
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT: ${{ steps.which.outputs.commit }}
+        run: |
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/runs?status=success&per_page=50" \
+                --jq ".workflow_runs[] | select(.display_title == \"build $COMMIT\") | .id" | head -1)
+          if [ -n "$run" ] && gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts" --jq '[.artifacts[] | select(.expired | not)] | length' | grep -qx '[5-9]'; then
+            echo "run=$run" >> "$GITHUB_OUTPUT"
+            echo "the release is made from build run $run: nothing is built again"
+          else
+            echo "no build ahead of $COMMIT is kept: this run builds it"
+          fi
+
   build:
     name: build ${{ matrix.name }}
+    needs: engine
+    if: needs.engine.outputs.reuse == ''
     strategy:
       fail-fast: true
       matrix:
@@ -52,12 +103,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: The engine commit this release builds
+      - name: The engine commit this run builds
         id: engine
-        run: |
-          commit=$(tr -d ' \n' < release/engine)
-          echo "$commit" | grep -Eq '^[0-9a-f]{40}$' || { echo "release/engine must hold one full commit hash"; exit 1; }
-          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+        run: echo "commit=${{ needs.engine.outputs.commit }}" >> "$GITHUB_OUTPUT"
 
       - name: The engine's source (read-only key)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -131,7 +179,8 @@ jobs:
     # Agent37 loads them unchanged (the digests stay), tests them, and copies them to Docker Hub,
     # where `gh attestation verify oci://marqius/wkhtmltopdf:TAG -R marqiushq/marqius-wkhtmltopdf`
     # checks them.
-    needs: build
+    needs: [engine, build]
+    if: needs.engine.outputs.reuse == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -145,7 +194,7 @@ jobs:
 
       - name: The engine commit
         id: engine
-        run: echo "commit=$(tr -d ' \n' < release/engine)" >> "$GITHUB_OUTPUT"
+        run: echo "commit=${{ needs.engine.outputs.commit }}" >> "$GITHUB_OUTPUT"
 
       - name: The engine's Dockerfile and demo files only
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -215,11 +264,14 @@ jobs:
           retention-days: 7
 
   release:
-    needs: [build, images]
+    needs: [engine, build, images]
+    # after this run's own build, or (a tag with a build ahead kept) from that build's files
+    if: always() && needs.engine.result == 'success' && (needs.engine.outputs.reuse != '' || (needs.build.result == 'success' && needs.images.result == 'success'))
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: write
+      actions: read
       id-token: write
       attestations: write
     steps:
@@ -229,7 +281,7 @@ jobs:
 
       - name: The engine commit
         id: engine
-        run: echo "commit=$(tr -d ' \n' < release/engine)" >> "$GITHUB_OUTPUT"
+        run: echo "commit=${{ needs.engine.outputs.commit }}" >> "$GITHUB_OUTPUT"
 
       - name: The engine's Cargo.toml and Cargo.lock only, for the SBOM
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -250,10 +302,13 @@ jobs:
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          # the programs only (linux-*, macos-*, windows-*): the images go to Docker Hub, not here
+          # the programs only (linux-*, macos-*, windows-*): the images go to Docker Hub, not here;
+          # from this run, or from the build ahead (its provenance comes with its files)
           pattern: '*-*'
           path: dist
           merge-multiple: true
+          run-id: ${{ needs.engine.outputs.reuse || github.run_id }}
+          github-token: ${{ github.token }}
 
       - run: mkdir -p sbom
 
